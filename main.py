@@ -1,81 +1,130 @@
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
 import data
 from selenium import webdriver
-from selenium.webdriver import Keys
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions
-from selenium.webdriver.support.wait import WebDriverWait
-
-
-# no modificar
-def retrieve_phone_code(driver) -> str:
-    """Este código devuelve un número de confirmación de teléfono y lo devuelve como un string.
-    Utilízalo cuando la aplicación espere el código de confirmación para pasarlo a tus pruebas.
-    El código de confirmación del teléfono solo se puede obtener después de haberlo solicitado en la aplicación."""
-
-    import json
-    import time
-    from selenium.common import WebDriverException
-    code = None
-    for i in range(10):
-        try:
-            logs = [log["message"] for log in driver.get_log('performance') if log.get("message")
-                    and 'api/v1/number?number' in log.get("message")]
-            for log in reversed(logs):
-                message_data = json.loads(log)["message"]
-                body = driver.execute_cdp_cmd('Network.getResponseBody',
-                                              {'requestId': message_data["params"]["requestId"]})
-                code = ''.join([x for x in body['body'] if x.isdigit()])
-        except WebDriverException:
-            time.sleep(1)
-            continue
-        if not code:
-            raise Exception("No se encontró el código de confirmación del teléfono.\n"
-                            "Utiliza 'retrieve_phone_code' solo después de haber solicitado el código en tu aplicación.")
-        return code
-
-
-class UrbanRoutesPage:
-    from_field = (By.ID, 'from')
-    to_field = (By.ID, 'to')
-
-    def __init__(self, driver):
-        self.driver = driver
-
-    def set_from(self, from_address):
-        self.driver.find_element(*self.from_field).send_keys(from_address)
-
-    def set_to(self, to_address):
-        self.driver.find_element(*self.to_field).send_keys(to_address)
-
-    def get_from(self):
-        return self.driver.find_element(*self.from_field).get_property('value')
-
-    def get_to(self):
-        return self.driver.find_element(*self.to_field).get_property('value')
-
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as ec
+import UrbanRoutesPage as Ur
 
 
 class TestUrbanRoutes:
-
     driver = None
 
     @classmethod
     def setup_class(cls):
-        # no lo modifiques, ya que necesitamos un registro adicional habilitado para recuperar el código de confirmación del teléfono
-        from selenium.webdriver import DesiredCapabilities
-        capabilities = DesiredCapabilities.CHROME
-        capabilities["goog:loggingPrefs"] = {'performance': 'ALL'}
-        cls.driver = webdriver.Chrome(desired_capabilities=capabilities)
+        options = Options()
+        options.set_capability("goog:loggingPrefs", {'performance': 'ALL'})
+        cls.driver = webdriver.Chrome(service=Service(), options=options)
 
     def test_set_route(self):
-        self.driver.get(data.urban_routes_url)
-        routes_page = UrbanRoutesPage(self.driver)
-        address_from = data.address_from
-        address_to = data.address_to
-        routes_page.set_route(address_from, address_to)
-        assert routes_page.get_from() == address_from
-        assert routes_page.get_to() == address_to
+        test_driver = Ur.UrbanRoutesPage(self.driver)
+        test_driver.driver.get(data.urban_routes_url)
 
+        WebDriverWait(self.driver, 10).until(
+            ec.presence_of_element_located((By.ID, "from"))
+        )
+        WebDriverWait(self.driver, 10).until(
+            ec.presence_of_element_located((By.ID, "to"))
+        )
+
+        test_driver.set_route(data.address_from, data.address_to)
+
+        WebDriverWait(self.driver, 10).until(
+            ec.text_to_be_present_in_element_value((By.ID, "from"), data.address_from)
+        )
+        WebDriverWait(self.driver, 10).until(
+            ec.text_to_be_present_in_element_value((By.ID, "to"), data.address_to)
+        )
+
+        assert test_driver.get_from() == data.address_from
+        assert test_driver.get_to() == data.address_to
+
+    def test_select_plan(self):
+        test_driver = Ur.UrbanRoutesPage(self.driver)
+        test_driver.request_comfort_cab()
+
+        WebDriverWait(self.driver, 10).until(
+            ec.text_to_be_present_in_element(
+                (By.XPATH, "//*[contains(text(),'Comfort')]"), "Comfort"
+            )
+        )
+
+        assert test_driver.get_selected_tariff() == "Comfort"
+
+    def test_fill_phone_number(self):
+        test_driver = Ur.UrbanRoutesPage(self.driver)
+        test_driver.set_phone_number(data.phone_number)
+
+        WebDriverWait(self.driver, 10).until(
+            ec.text_to_be_present_in_element_value(
+                (By.ID, "phone"), data.phone_number
+            )
+        )
+
+        assert test_driver.get_phone_in_field() == data.phone_number
+
+    def test_fill_card(self):
+        test_driver = Ur.UrbanRoutesPage(self.driver)
+        test_driver.set_credit_card_number(data.card_number, data.card_code)
+
+        WebDriverWait(self.driver, 10).until(
+            ec.presence_of_element_located((By.XPATH, "//div[@class='pp-button filled']//img[@alt='card']"))
+        )
+
+        assert test_driver.get_card_option() is not None
+
+    def test_comment_for_driver(self):
+        test_driver = Ur.UrbanRoutesPage(self.driver)
+        test_driver.fill_extra_options(data.message_for_driver)
+
+        WebDriverWait(self.driver, 10).until(
+            ec.text_to_be_present_in_element_value(
+                (By.ID, "comment"), data.message_for_driver
+            )
+        )
+
+        assert test_driver.get_comment_for_driver() == data.message_for_driver
+
+    def test_order_blanket_and_handkerchiefs(self):
+        test_driver = Ur.UrbanRoutesPage(self.driver)
+        test_driver.fill_extra_options(data.message_for_driver)
+
+        assert test_driver.is_blanket_checkbox_selected() is False
+
+    def test_order_2_ice_creams(self):
+        test_driver = Ur.UrbanRoutesPage(self.driver)
+        test_driver.fill_extra_options(data.message_for_driver)
+
+        WebDriverWait(self.driver, 10).until(
+            ec.text_to_be_present_in_element(
+                (By.XPATH, "//div[contains(text(),'Helado')]/..//div[@class='counter-value']"), "2"
+            )
+        )
+
+        assert test_driver.get_current_icecream_count_value() == "2"
+
+    def test_car_search_model_appears(self):
+        test_driver = Ur.UrbanRoutesPage(self.driver)
+        test_driver.book_trip()
+
+        WebDriverWait(self.driver, 10).until(
+            ec.text_to_be_present_in_element(
+                (By.XPATH, "//div[@class='order shown']//div[@class='order-body']//div[@class='order-header']//div["
+                           "@class='order-header-title']"), "Buscar automóvil"
+            )
+        )
+
+        assert test_driver.get_order_screen_title() == "Buscar automóvil"
+
+    def test_driver_info_appears(self):
+        test_driver = Ur.UrbanRoutesPage(self.driver)
+        test_driver.book_trip()
+        test_driver.wait_confirmation()
+        WebDriverWait(self.driver, 20).until(
+            lambda driver: "El conductor llegará en" in test_driver.get_order_screen_title()
+        )
+        assert "El conductor llegará en" in test_driver.get_order_screen_title()
 
     @classmethod
     def teardown_class(cls):
